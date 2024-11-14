@@ -257,7 +257,7 @@ try {
     Write-Output "Waiting for Azure AD application and permissions to propagate..."
     Start-Sleep -Seconds 60 
 
-    Write-Output "IMPORTANT: Please visit https://entra.microsoft.com/ grant admin consent for the application in the Azure Portal."
+    Write-Output "IMPORTANT: Please visit https://entra.microsoft.com/ and grant admin consent for the application in the Azure Portal."
     Write-Output "Application ID: $clientId"
     Write-Output "Press Enter once admin consent has been granted..."
     Read-Host
