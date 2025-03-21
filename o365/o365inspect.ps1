@@ -191,7 +191,7 @@ try {
     Write-Output "Starting 365Inspect setup..."
 
     # Connect to Microsoft Graph with interactive login
-    Connect-MgGraph -Scopes "Application.ReadWrite.All", "Directory.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "RoleManagement.ReadWrite.Directory" -UseDeviceAuthentication
+    Connect-MgGraph -Scopes "Application.ReadWrite.All", "Directory.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "RoleManagement.ReadWrite.Directory"
     $context = Get-MgContext
     $tenantId = $context.TenantId
     
