@@ -1,5 +1,6 @@
 param (
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
+    [ValidateScript({ Test-Path $_ -PathType 'Container' })]
     [string]$OutputDir
 )
 
@@ -16,39 +17,67 @@ $requiredModules = @(
 foreach ($module in $requiredModules) {
     if (!(Get-Module -ListAvailable -Name $module)) {
         Write-Output "Installing $module..."
-        Install-Module -Name $module -Force -AllowClobber -Scope CurrentUser
+        try {
+            Install-Module -Name $module -Force -AllowClobber -Scope CurrentUser -ErrorAction Stop
+        }
+        catch {
+            Write-Error "Failed to install module $module: $_"
+            exit 1
+        }
     }
     Import-Module $module
 }
 
+# Check if git is installed
+if (!(Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "Git is not installed. Please install git and try again."
+    exit 1
+}
+
 # Clone 365Inspect if not exists
 $path = "./365Inspect"
-If(!(test-path -PathType container $path)) {
-    git clone https://github.com/soteria-security/365Inspect.git $path
+if (!(Test-Path -PathType Container $path)) {
+    Write-Output "Cloning 365Inspect repository..."
+    try {
+        git clone https://github.com/soteria-security/365Inspect.git $path
+    }
+    catch {
+        Write-Error "Failed to clone 365Inspect repository: $_"
+        exit 1
+    }
 }
 
 # Create self-signed certificate
 function New-SelfSignedCertificateWithPrivateKey {
-    $certName = "365InspectCert"
-    $cert = New-SelfSignedCertificate -Subject "CN=$certName" -CertStoreLocation "Cert:\CurrentUser\My" `
-        -KeyExportPolicy Exportable -KeySpec Signature -KeyLength 2048 -KeyAlgorithm RSA `
-        -HashAlgorithm SHA256 -NotAfter (Get-Date).AddMonths(12)
-    return $cert
+    $certName = "365InspectCert-$(Get-Random)"
+    try {
+        $cert = New-SelfSignedCertificate -Subject "CN=$certName" -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyExportPolicy Exportable -KeySpec Signature -KeyLength 2048 -KeyAlgorithm RSA `
+            -HashAlgorithm SHA256 -NotAfter (Get-Date).AddMonths(12) -ErrorAction Stop
+        return $cert
+    }
+    catch {
+        Write-Error "Failed to create self-signed certificate: $_"
+        exit 1
+    }
 }
 
 # Convert hex string to byte array
 function ConvertFrom-HexString {
-    param(
+    param (
         [string]$HexString
     )
-    
-    $Bytes = [byte[]]::new($HexString.Length / 2)
-    
-    for($i=0; $i -lt $HexString.Length; $i+=2) {
-        $Bytes[$i/2] = [convert]::ToByte($HexString.Substring($i, 2), 16)
+    try {
+        $Bytes = [byte[]]::new($HexString.Length / 2)
+        for ($i = 0; $i -lt $HexString.Length; $i += 2) {
+            $Bytes[$i / 2] = [convert]::ToByte($HexString.Substring($i, 2), 16)
+        }
+        return $Bytes
     }
-    
-    return $Bytes
+    catch {
+        Write-Error "Failed to convert hex string to byte array: $_"
+        exit 1
+    }
 }
 
 # Get permission IDs
@@ -60,15 +89,27 @@ function Get-PermissionIds {
     
     $permissionsList = @()
     
-    # Get Graph permissions
-    $graphServicePrincipal = Get-MgServicePrincipal -Filter "appId eq '$graphResourceId'"
+    # Get Graph service principal
+    try {
+        $graphServicePrincipal = Get-MgServicePrincipal -Filter "appId eq '$graphResourceId'" -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to get Microsoft Graph service principal: $_"
+        exit 1
+    }
     $graphPermissions = $graphServicePrincipal.AppRoles
     
-    # Get Exchange Online permissions
-    $exchangeServicePrincipal = Get-MgServicePrincipal -Filter "appId eq '$exchangeResourceId'"
+    # Get Exchange Online service principal
+    try {
+        $exchangeServicePrincipal = Get-MgServicePrincipal -Filter "appId eq '$exchangeResourceId'" -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to get Exchange Online service principal: $_"
+        exit 1
+    }
     $exchangePermissions = $exchangeServicePrincipal.AppRoles
     
-    # List of required Graph permissions
+    # List of required Graph permissions (ensure this list is up-to-date for 365Inspect)
     $requiredGraphPermissions = @(
         'User.Read.All', 'Calendars.Read', 'Mail.Read', 'Contacts.Read', 'TeamMember.Read.All',
         'Place.Read.All', 'Chat.UpdatePolicyViolation.All', 'Policy.Read.ConditionalAccess',
@@ -118,7 +159,7 @@ function Get-PermissionIds {
         $permission = $graphPermissions | Where-Object { $_.Value -eq $permissionName }
         if ($permission) {
             $graphPermissionIds += @{
-                "id" = $permission.Id
+                "id"   = $permission.Id
                 "type" = "Role"
             }
         }
@@ -131,22 +172,23 @@ function Get-PermissionIds {
     $exchangePermission = $exchangePermissions | Where-Object { $_.Value -eq "Exchange.ManageAsApp" }
     if ($exchangePermission) {
         $permissionsList += @{
-            "resourceAppId" = $exchangeResourceId
+            "resourceAppId"  = $exchangeResourceId
             "resourceAccess" = @(
                 @{
-                    "id" = $exchangePermission.Id
+                    "id"   = $exchangePermission.Id
                     "type" = "Role"
                 }
             )
         }
     }
     else {
-        Write-Warning "Exchange.ManageAsApp permission not found"
+        Write-Error "Required Exchange.ManageAsApp permission not found"
+        exit 1
     }
 
     # Add Graph permissions to the list
     $permissionsList += @{
-        "resourceAppId" = $graphResourceId
+        "resourceAppId"  = $graphResourceId
         "resourceAccess" = $graphPermissionIds
     }
 
@@ -156,7 +198,7 @@ function Get-PermissionIds {
 # Create Azure AD application
 function New-AzureADApplication {
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
     )
     
@@ -165,23 +207,33 @@ function New-AzureADApplication {
 
     # Create new application
     $displayName = "365Inspect-Automation-$(Get-Random)"
-    $app = New-MgApplication -DisplayName $displayName `
-        -SignInAudience "AzureADMyOrg" `
-        -RequiredResourceAccess $requiredResourceAccess
+    try {
+        $app = New-MgApplication -DisplayName $displayName `
+            -SignInAudience "AzureADMyOrg" `
+            -RequiredResourceAccess $requiredResourceAccess -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to create Azure AD application: $_"
+        exit 1
+    }
 
     # Add certificate credential
-    $thumbprintBytes = ConvertFrom-HexString -HexString $Certificate.Thumbprint
-    $thumbprintBase64 = [Convert]::ToBase64String($thumbprintBytes)
-    
-    Update-MgApplication -ApplicationId $app.Id -AdditionalProperties @{
-        "keyCredentials" = @(
+    try {
+        $thumbprintBytes = ConvertFrom-HexString -HexString $Certificate.Thumbprint
+        $thumbprintBase64 = [Convert]::ToBase64String($thumbprintBytes)
+        
+        Update-MgApplication -ApplicationId $app.Id -KeyCredentials @(
             @{
-                "customKeyIdentifier" = $thumbprintBase64
-                "type" = "AsymmetricX509Cert"
-                "usage" = "Verify"
-                "key" = [Convert]::ToBase64String($Certificate.RawData)
+                CustomKeyIdentifier = $thumbprintBase64
+                Type                = "AsymmetricX509Cert"
+                Usage               = "Verify"
+                Key                 = [Convert]::ToBase64String($Certificate.RawData)
             }
-        )
+        ) -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to add certificate to application: $_"
+        exit 1
     }
 
     return $app
@@ -191,7 +243,13 @@ try {
     Write-Output "Starting 365Inspect setup..."
 
     # Connect to Microsoft Graph with interactive login
-    Connect-MgGraph -Scopes "Application.ReadWrite.All", "Directory.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "RoleManagement.ReadWrite.Directory" -UseDeviceAuthentication
+    try {
+        Connect-MgGraph -Scopes "Application.ReadWrite.All", "Directory.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "RoleManagement.ReadWrite.Directory" -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to connect to Microsoft Graph: $_"
+        exit 1
+    }
     $context = Get-MgContext
     $tenantId = $context.TenantId
     
@@ -207,55 +265,99 @@ try {
 
     # Create service principal for the application
     Write-Output "Creating service principal..."
-    $sp = New-MgServicePrincipal -AppId $clientId
+    try {
+        $sp = New-MgServicePrincipal -AppId $clientId -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to create service principal: $_"
+        exit 1
+    }
 
     # Get Exchange Online service principal
-    $exchangeSpId = (Get-MgServicePrincipal -Filter "appId eq '00000002-0000-0ff1-ce00-000000000000'").Id
+    try {
+        $exchangeSp = Get-MgServicePrincipal -Filter "appId eq '00000002-0000-0ff1-ce00-000000000000'" -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to get Exchange Online service principal: $_"
+        exit 1
+    }
+    $exchangeSpId = $exchangeSp.Id
     
     # Get the Exchange.ManageAsApp role
-    $exchangeServicePrincipal = Get-MgServicePrincipal -Filter "appId eq '00000002-0000-0ff1-ce00-000000000000'"
-    $exchangeRole = $exchangeServicePrincipal.AppRoles | Where-Object { $_.Value -eq "Exchange.ManageAsApp" }
-
+    $exchangeRole = $exchangeSp.AppRoles | Where-Object { $_.Value -eq "Exchange.ManageAsApp" }
     if ($null -eq $exchangeRole) {
-        throw "Exchange.ManageAsApp role not found"
+        Write-Error "Exchange.ManageAsApp role not found"
+        exit 1
     }
 
     # Assign Exchange.ManageAsApp role to the application
     Write-Output "Assigning Exchange.ManageAsApp role..."
-    $params = @{
-        PrincipalId = $sp.Id
-        ResourceId = $exchangeSpId
-        AppRoleId = $exchangeRole.Id
+    try {
+        $params = @{
+            PrincipalId = $sp.Id
+            ResourceId  = $exchangeSpId
+            AppRoleId   = $exchangeRole.Id
+        }
+        New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $sp.Id -BodyParameter $params -ErrorAction Stop
     }
-    New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $sp.Id -BodyParameter $params
+    catch {
+        Write-Error "Failed to assign Exchange.ManageAsApp role: $_"
+        exit 1
+    }
 
     # Assign Exchange Administrator role
     Write-Output "Assigning Exchange Administrator role..."
     
-    # Get Exchange Administrator role
-    $exchangeAdminRole = Get-MgDirectoryRole -Filter "DisplayName eq 'Exchange Administrator'"
+    # Get Exchange Administrator role template
+    try {
+        $exchangeAdminRoleTemplate = Get-MgDirectoryRoleTemplate | Where-Object { $_.DisplayName -eq 'Exchange Administrator' } -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to get Exchange Administrator role template: $_"
+        exit 1
+    }
+    
+    # Check if the role is already activated
+    $exchangeAdminRole = Get-MgDirectoryRole -Filter "RoleTemplateId eq '$($exchangeAdminRoleTemplate.Id)'" -ErrorAction SilentlyContinue
     if ($null -eq $exchangeAdminRole) {
-        # If role is not found, activate it
-        $exchangeAdminRoleTemplate = Get-MgDirectoryRoleTemplate | Where-Object { $_.DisplayName -eq 'Exchange Administrator' }
-        $exchangeAdminRole = New-MgDirectoryRole -RoleTemplateId $exchangeAdminRoleTemplate.Id
+        # Activate the role
+        try {
+            $exchangeAdminRole = New-MgDirectoryRole -RoleTemplateId $exchangeAdminRoleTemplate.Id -ErrorAction Stop
+        }
+        catch {
+            Write-Error "Failed to activate Exchange Administrator role: $_"
+            exit 1
+        }
     }
 
     # Create role assignment
-    $roleAssignmentParams = @{
-        "@odata.type" = "#microsoft.graph.unifiedRoleAssignment"
-        RoleDefinitionId = $exchangeAdminRole.RoleTemplateId
-        PrincipalId = $sp.Id
-        DirectoryScopeId = "/"
+    try {
+        $roleAssignmentParams = @{
+            "@odata.type"     = "#microsoft.graph.unifiedRoleAssignment"
+            RoleDefinitionId  = $exchangeAdminRoleTemplate.Id
+            PrincipalId       = $sp.Id
+            DirectoryScopeId  = "/"
+        }
+        New-MgRoleManagementDirectoryRoleAssignment -BodyParameter $roleAssignmentParams -ErrorAction Stop
     }
-    New-MgRoleManagementDirectoryRoleAssignment -BodyParameter $roleAssignmentParams
+    catch {
+        Write-Error "Failed to assign Exchange Administrator role: $_"
+        exit 1
+    }
 
     # Get user information
-    $user = Get-MgUser -Filter "userPrincipalName eq '$($context.Account)'"
+    try {
+        $user = Get-MgUser -Filter "userPrincipalName eq '$($context.Account)'" -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to get user information: $_"
+        exit 1
+    }
     $userPrincipalName = $user.UserPrincipalName
     $organization = $userPrincipalName.Split("@")[-1]
 
     Write-Output "Waiting for Azure AD application and permissions to propagate..."
-    Start-Sleep -Seconds 60 
+    Start-Sleep -Seconds 60
 
     Write-Output "IMPORTANT: Please visit https://entra.microsoft.com/ and grant admin consent for the application in the Azure Portal."
     Write-Output "Application ID: $clientId"
@@ -264,28 +366,47 @@ try {
 
     # Connect to required services
     Write-Output "Connecting to Exchange Online..."
-    Connect-ExchangeOnline -CertificateThumbPrint $certThumbprint -AppID $clientId -Organization $organization
+    try {
+        Connect-ExchangeOnline -CertificateThumbPrint $certThumbprint -AppID $clientId -Organization $organization -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to connect to Exchange Online: $_"
+        exit 1
+    }
 
     Write-Output "Connecting to Microsoft Graph..."
-    Connect-MgGraph -ClientId $clientId -TenantId $tenantId -CertificateThumbprint $certThumbprint
+    try {
+        Connect-MgGraph -ClientId $clientId -TenantId $tenantId -CertificateThumbprint $certThumbprint -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to connect to Microsoft Graph: $_"
+        exit 1
+    }
 
     # Run 365Inspect
     Write-Output "Starting 365Inspect scan..."
     Set-Location $path
     .\365Inspect.ps1 -OutPath $OutputDir -UserPrincipalName $userPrincipalName -Auth ALREADY_AUTHED
 
-} catch {
+}
+catch {
     Write-Error "An error occurred: $_"
-    throw
-} finally {
+    exit 1
+}
+finally {
     # Cleanup
     Write-Output "Cleaning up resources..."
     
     # Get and remove role assignments
     Write-Output "Removing role assignments..."
-    $roleAssignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '$($sp.Id)'"
-    foreach ($assignment in $roleAssignments) {
-        Remove-MgRoleManagementDirectoryRoleAssignment -UnifiedRoleAssignmentId $assignment.Id -ErrorAction SilentlyContinue
+    try {
+        $roleAssignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '$($sp.Id)'" -ErrorAction SilentlyContinue
+        foreach ($assignment in $roleAssignments) {
+            Remove-MgRoleManagementDirectoryRoleAssignment -UnifiedRoleAssignmentId $assignment.Id -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        Write-Warning "Failed to remove role assignments: $_"
     }
     
     # Disconnect from services
@@ -294,15 +415,30 @@ try {
     
     # Remove Azure AD application and service principal
     if ($sp) {
-        Remove-MgServicePrincipal -ServicePrincipalId $sp.Id -ErrorAction SilentlyContinue
+        try {
+            Remove-MgServicePrincipal -ServicePrincipalId $sp.Id -ErrorAction SilentlyContinue
+        }
+        catch {
+            Write-Warning "Failed to remove service principal: $_"
+        }
     }
     if ($app) {
-        Remove-MgApplication -ApplicationId $app.Id -ErrorAction SilentlyContinue
+        try {
+            Remove-MgApplication -ApplicationId $app.Id -ErrorAction SilentlyContinue
+        }
+        catch {
+            Write-Warning "Failed to remove application: $_"
+        }
     }
     
     # Remove certificate
     if ($certThumbprint) {
-        Get-ChildItem "Cert:\CurrentUser\My\$certThumbprint" | Remove-Item -ErrorAction SilentlyContinue
+        try {
+            Get-ChildItem "Cert:\CurrentUser\My\$certThumbprint" | Remove-Item -ErrorAction SilentlyContinue
+        }
+        catch {
+            Write-Warning "Failed to remove certificate: $_"
+        }
     }
     
     # Return to original directory
