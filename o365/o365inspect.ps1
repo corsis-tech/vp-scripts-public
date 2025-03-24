@@ -21,7 +21,7 @@ foreach ($module in $requiredModules) {
             Install-Module -Name $module -Force -AllowClobber -Scope CurrentUser -ErrorAction Stop
         }
         catch {
-            Write-Error "Failed to install module $module: $_"
+            Write-Error "Failed to install module ${module}: $_"
             exit 1
         }
     }
@@ -201,7 +201,7 @@ function New-AzureADApplication {
         [Parameter(Mandatory = $true)]
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
     )
-    
+
     # Get required permissions
     $requiredResourceAccess = Get-PermissionIds
 
@@ -217,19 +217,20 @@ function New-AzureADApplication {
         exit 1
     }
 
-    # Add certificate credential
     try {
         $thumbprintBytes = ConvertFrom-HexString -HexString $Certificate.Thumbprint
-        $thumbprintBase64 = [Convert]::ToBase64String($thumbprintBytes)
-        
-        Update-MgApplication -ApplicationId $app.Id -KeyCredentials @(
-            @{
-                CustomKeyIdentifier = $thumbprintBase64
-                Type                = "AsymmetricX509Cert"
-                Usage               = "Verify"
-                Key                 = [Convert]::ToBase64String($Certificate.RawData)
-            }
-        ) -ErrorAction Stop
+
+        # Create a key credential object
+        $keyCredential = New-Object -TypeName Microsoft.Graph.PowerShell.Models.MicrosoftGraphKeyCredential
+        $keyCredential.CustomKeyIdentifier = $thumbprintBytes
+        $keyCredential.Type = "AsymmetricX509Cert"
+        $keyCredential.Usage = "Verify"
+        $keyCredential.Key = $Certificate.RawData
+        $keyCredential.StartDateTime = $Certificate.NotBefore
+        $keyCredential.EndDateTime = $Certificate.NotAfter
+        $keyCredential.DisplayName = "CN=$($Certificate.Subject)"
+
+        Update-MgApplication -ApplicationId $app.Id -KeyCredentials @($keyCredential) -ErrorAction Stop
     }
     catch {
         Write-Error "Failed to add certificate to application: $_"
@@ -359,7 +360,7 @@ try {
     Write-Output "Waiting for Azure AD application and permissions to propagate..."
     Start-Sleep -Seconds 60
 
-    Write-Output "IMPORTANT: Please visit https://entra.microsoft.com/ and grant admin consent for the application in the Azure Portal."
+    Write-Output "IMPORTANT: Please visit https://entra.microsoft.com/. Then Applications > App registrations > All Applications. And grant admin consent for the application (under API permissions) in the Azure Portal."
     Write-Output "Application ID: $clientId"
     Write-Output "Press Enter once admin consent has been granted..."
     Read-Host
