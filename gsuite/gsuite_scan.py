@@ -314,14 +314,26 @@ Please follow these steps before continuing:
 
         print("Cloning ScubaGoggles repository...")
         try:
-            subprocess.run([
-                'git', 'clone',
-                'https://github.com/cisagov/ScubaGoggles.git',
-                self.scubagoggles_dir
-            ], check=True)
-            print("ScubaGoggles cloned successfully")
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "https://github.com/cisagov/ScubaGoggles.git",
+                    self.scubagoggles_dir,
+                ],
+                check=True,
+            )
+
+            print("Checking out commit f104430e930b3afed447b0e25d8e19bec283cdf8...")
+            subprocess.run(
+                ["git", "checkout", "f104430e930b3afed447b0e25d8e19bec283cdf8"],
+                cwd=self.scubagoggles_dir,
+                check=True,
+            )
+
+            print("ScubaGoggles cloned and checked out successfully")
         except subprocess.CalledProcessError as e:
-            print(f"Error cloning ScubaGoggles: {str(e)}")
+            print(f"Error setting up ScubaGoggles: {str(e)}")
             raise
 
     def download_opa(self):
