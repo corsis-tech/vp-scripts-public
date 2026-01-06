@@ -52,6 +52,7 @@ class ScubaGogglesAutomation:
     def __init__(self, customer_id, admin_email, output_dir):
         self.customer_id = customer_id
         self.admin_email = admin_email
+        self.subject_email = admin_email
         self.output_dir = os.path.abspath(output_dir)
         self.project_id = 'workspace-scan-' + str(int(time.time()))
 
