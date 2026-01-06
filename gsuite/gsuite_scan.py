@@ -307,30 +307,27 @@ Please follow these steps before continuing:
 
     def clone_scubagoggles(self):
         print("\nSetting up ScubaGoggles...")
-
         if os.path.exists(self.scubagoggles_dir):
             print("Removing existing ScubaGoggles directory...")
             shutil.rmtree(self.scubagoggles_dir)
-
         print("Cloning ScubaGoggles repository...")
         try:
             subprocess.run(
                 [
                     "git",
                     "clone",
+                    "--no-checkout",
                     "https://github.com/cisagov/ScubaGoggles.git",
                     self.scubagoggles_dir,
                 ],
                 check=True,
             )
-
             print("Checking out commit f104430e930b3afed447b0e25d8e19bec283cdf8...")
             subprocess.run(
                 ["git", "checkout", "f104430e930b3afed447b0e25d8e19bec283cdf8"],
                 cwd=self.scubagoggles_dir,
                 check=True,
             )
-
             print("ScubaGoggles cloned and checked out successfully")
         except subprocess.CalledProcessError as e:
             print(f"Error setting up ScubaGoggles: {str(e)}")
