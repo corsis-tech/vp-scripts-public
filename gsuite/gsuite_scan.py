@@ -329,7 +329,27 @@ Please follow these steps before continuing:
                 cwd=self.scubagoggles_dir,
                 check=True,
             )
-            print("ScubaGoggles cloned and checked out successfully")
+
+            # Patch out the sys.path.insert that shadows stdlib `types` on
+            # Python 3.12+. scuba.py at f104430 does
+            # `sys.path.insert(1, './scubagoggles')`, which puts the internal
+            # package dir on sys.path; stdlib enum.py's `from types import ...`
+            # then resolves to scubagoggles/types.py and circular-imports.
+            scuba_py = os.path.join(self.scubagoggles_dir, 'scuba.py')
+            with open(scuba_py, 'r') as f:
+                contents = f.read()
+            patched = contents.replace(
+                "import sys\nsys.path.insert(1, './scubagoggles')\n\n", ""
+            )
+            if patched == contents:
+                raise RuntimeError(
+                    "Failed to patch scuba.py: expected sys.path.insert "
+                    "line not found. The pinned commit may have changed."
+                )
+            with open(scuba_py, 'w') as f:
+                f.write(patched)
+
+            print("ScubaGoggles cloned, checked out, and patched successfully")
         except subprocess.CalledProcessError as e:
             print(f"Error setting up ScubaGoggles: {str(e)}")
             raise
