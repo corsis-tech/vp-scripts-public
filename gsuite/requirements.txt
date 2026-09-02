@@ -24,7 +24,7 @@ pytz==2026.2
 PyYAML==6.0.3
 requests==2.34.2
 requests-oauthlib==2.0.0
-rsa==4.9
+rsa==4.9.1
 six==1.17.0
 tqdm==4.67.3
 tzdata==2026.2
