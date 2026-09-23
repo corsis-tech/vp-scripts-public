@@ -1,6 +1,6 @@
 cachetools==7.1.8
 certifi==2024.8.30
-charset-normalizer==3.4.7
+charset-normalizer==3.5.1
 dnspython==2.8.0
 google-api-core==2.23.0
 google-api-python-client==2.200.0
