@@ -15,7 +15,7 @@ numpy==2.5.3
 oauthlib==4.0.0
 pandas==3.0.5
 proto-plus==1.28.0
-protobuf==5.29.6
+protobuf==7.36.2
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pyparsing==3.3.3
