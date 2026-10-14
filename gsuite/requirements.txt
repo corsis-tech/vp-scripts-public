@@ -3,7 +3,7 @@ certifi==2024.8.30
 charset-normalizer==3.5.1
 dnspython==2.8.0
 google-api-core==2.23.0
-google-api-python-client==2.200.0
+google-api-python-client==2.201.0
 google-auth==2.59.0
 google-auth-httplib2==0.4.2
 google-auth-oauthlib==1.4.1
