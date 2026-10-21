@@ -11,7 +11,7 @@ googleapis-common-protos==1.66.0
 httplib2==0.32.0
 idna==3.15
 MarkupSafe==3.0.4
-numpy==2.5.3
+numpy==2.5.4
 oauthlib==4.0.0
 pandas==3.0.5
 proto-plus==1.28.0
